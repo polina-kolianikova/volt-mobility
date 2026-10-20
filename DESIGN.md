@@ -7,3 +7,6 @@ The same assembly lives throughout the native scroll. Complete bicycle, separate
 The bicycle is original procedural geometry with routed tubes, tyres, spokes, crank, belt, motor, battery, grips, lights and saddle. Lights and finishes are useful controls. The range is an explicitly illustrative energy calculation. Saving produces a real local specification file. The small concept disclosure avoids presenting the study as an available product.
 
 Reference principles: Marcelo's large product staging and changing scale, Scroll Cinema's assembly continuity, Refero's teenage engineering catalogue restraint. No copied branding, code or imagery.
+
+
+Revision 2: centred racing poster, kinetic oversized lettering and road strokes. Static wheel/frame meshes batched per material. A baked soft contact texture replaces repeated realtime shadow maps. Event-driven rendering stops after scroll settles and on hidden/offscreen states. Responsive DPR has a bounded automatic downshift. Dataset render counters support runtime verification.
