@@ -1,0 +1,47 @@
+/* Project type direction. Local fonts, licensed for web embedding. */
+@font-face {
+  font-family: 'Barlow Condensed';
+  font-style: italic;
+  font-weight: 800;
+  font-display: swap;
+  src: url("assets/fonts/barlowcondensed-italic-800-latin.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Barlow';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("assets/fonts/barlow-normal-400-latin.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Barlow';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("assets/fonts/barlow-normal-500-latin.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Barlow';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("assets/fonts/barlow-normal-600-latin.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+body { font-kerning: normal; font-synthesis: none; text-rendering: optimizeLegibility; }
+button, input, textarea, select { font-family: inherit; }
+h1, h2, h3 { font-kerning: normal; text-wrap: balance; hyphens: none; }
+:root { --type-display: "Barlow Condensed", Impact, sans-serif; --type-text: "Barlow", Arial, sans-serif; }
+body { font-family: var(--type-text); font-weight: 400; }
+h1, h2, .logo, .fallback-bike, .spec-strip strong, .range-result strong, footer > p { font-family: var(--type-display); font-weight: 800; font-style: italic; }
+h1, h2 { letter-spacing: -0.035em; line-height: 0.94; }
+.hero h1 { letter-spacing: -0.04em; line-height: 0.96; font-size: 15.8vw; }
+.logo { letter-spacing: -0.055em; }
+.logo sup, .fallback-bike small { font-family: var(--type-text); font-style: normal; font-weight: 400; }
+.header-note, .eyebrow, .micro, .side-note, .model-label, .panel-top, .spec-strip span { letter-spacing: 0.05em; }
+@media (max-width: 700px) { .hero h1 { font-size: 20vw; } }
+@media (max-height: 500px) and (min-width: 701px) { .hero h1 { font-size: 18vh; } }

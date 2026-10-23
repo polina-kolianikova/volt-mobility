@@ -79,8 +79,16 @@ $("#save").addEventListener("click", () => {
     "Specification downloaded. Your choices stay here.";
 });
 function measure() {
-  const config = $("#configure").offsetTop;
-  target = clamp(scrollY / config) * 3;
+  const chapters = [...document.querySelectorAll("[data-chapter]")];
+  target = 3;
+  for (let i = 0; i < chapters.length - 1; i++) {
+    const start = chapters[i].offsetTop;
+    const end = chapters[i + 1].offsetTop;
+    if (scrollY <= end) {
+      target = i + clamp((scrollY - start) / Math.max(1, end - start));
+      break;
+    }
+  }
   $(".progress i").style.width =
     `${clamp(scrollY / (document.documentElement.scrollHeight - innerHeight)) * 100}%`;
 }
@@ -373,6 +381,85 @@ try {
   grid.material.transparent = true;
   grid.material.opacity = 0.07;
   scene.add(grid);
+
+  // One batched road layer. Its travel comes from scroll distance, never time.
+  const roadGeometry = new THREE.BufferGeometry();
+  const roadVertices = [];
+  for (let lane = -2; lane <= 2; lane++) {
+    for (let mark = -5; mark <= 5; mark++) {
+      const x = mark * 3.4 + (lane % 2) * 1.1;
+      roadVertices.push(x, 0, lane * 1.35, x + 1.15, 0, lane * 1.35);
+    }
+  }
+  roadGeometry.setAttribute(
+    "position",
+    new THREE.Float32BufferAttribute(roadVertices, 3),
+  );
+  const roadMaterial = new THREE.LineBasicMaterial({
+    color: "#7d8274",
+    transparent: true,
+    opacity: 0.24,
+    depthWrite: false,
+  });
+  const road = new THREE.LineSegments(roadGeometry, roadMaterial);
+  scene.add(road);
+  const bikeBounds = new THREE.Box3();
+  const corner = new THREE.Vector3();
+  function projectedBikeBounds() {
+    bike.updateMatrixWorld(true);
+    camera.updateMatrixWorld(true);
+    bikeBounds.setFromObject(bike);
+    let top = Infinity, bottom = -Infinity, left = Infinity, right = -Infinity;
+    for (let i = 0; i < 8; i++) {
+      corner.set(
+        i & 1 ? bikeBounds.max.x : bikeBounds.min.x,
+        i & 2 ? bikeBounds.max.y : bikeBounds.min.y,
+        i & 4 ? bikeBounds.max.z : bikeBounds.min.z,
+      ).project(camera);
+      const x = (corner.x + 1) * innerWidth * 0.5;
+      const y = (1 - corner.y) * innerHeight * 0.5;
+      top = Math.min(top, y);
+      bottom = Math.max(bottom, y);
+      left = Math.min(left, x);
+      right = Math.max(right, x);
+    }
+    return { top, bottom, left, right };
+  }
+  function mobileReadingSlot(q) {
+    const pairs = [
+      [".hero h1", ".hero-bottom"],
+      [".inside .section-copy", ".model-label"],
+      [".ride-heading", ".ride-copy"],
+      [".config-intro", ".config-panel"],
+    ];
+    const index = Math.min(3, Math.floor(q + 0.08));
+    const [before, after] = pairs[index];
+    let top = Math.max(24, $(before).getBoundingClientRect().bottom + 20);
+    let bottom = Math.min(innerHeight - 24, $(after).getBoundingClientRect().top - 20);
+    const reading = [...document.querySelectorAll(
+      "header,.hero h1,.hero-bottom,.inside .section-copy,.model-label,.ride-heading,.ride-copy,.spec-strip,.config-intro,.config-panel,footer",
+    )].map((el) => el.getBoundingClientRect()).filter((rect) =>
+      rect.height > 0 && rect.bottom > 24 && rect.top < innerHeight - 24,
+    ).sort((a, b) => a.top - b.top);
+    let entrance = index ? THREE.MathUtils.smoothstep(q, index - 0.08, index) : 1;
+    if (bottom - top < 120) {
+      let edge = 24, best = [24, 24];
+      for (const rect of reading) {
+        if (rect.top - 18 - edge > best[1] - best[0]) best = [edge, rect.top - 18];
+        edge = Math.max(edge, rect.bottom + 18);
+      }
+      if (innerHeight - 24 - edge > best[1] - best[0]) best = [edge, innerHeight - 24];
+      [top, bottom] = best;
+      entrance = 1;
+    }
+    return {
+      top,
+      bottom,
+      height: Math.max(0, bottom - top),
+      entrance,
+      reading,
+    };
+  }
   addEventListener("resize", () => {
     if (contextLost) return;
     camera.aspect = innerWidth / innerHeight;
@@ -383,14 +470,21 @@ try {
   let last = performance.now(),
     raf = 0,
     contextLost = false,
-    angleNow = -0.2,
     frames = 0,
-    slow = 0;
+    slow = 0,
+    phoneY = null,
+    phoneScale = null;
   const stats = document.documentElement.dataset;
   function wake() {
-    if (!raf && !document.hidden && !contextLost)
+    if (!raf && !document.hidden && !contextLost) {
+      last = performance.now() - 1000 / 60;
       raf = requestAnimationFrame(tick);
+    }
   }
+  document.fonts.ready.then(() => {
+    measure();
+    wake();
+  });
   function tick(now) {
     raf = 0;
     if (contextLost) {
@@ -416,52 +510,66 @@ try {
         slow = 0;
       }
     } else slow = Math.max(0, slow - 1);
-    const dt = Math.min((now - last) / 1000, 0.05);
+    const dt = Math.min(Math.max((now - last) / 1000, 1 / 120), 0.05);
     last = now;
-    progress = reduce.matches
-      ? target
-      : mix(progress, target, 1 - Math.exp(-10 * dt));
+    // Native scroll is the single playhead. Stop and reverse have no old queue.
+    progress = target;
     const mobile = innerWidth < 701,
       q = progress;
-    const explode = Math.sin(clamp((q - 0.55) / 1.05) * Math.PI);
+    const ease = (a, b) => THREE.MathUtils.smoothstep(q, a, b);
+    const chapterBlend = (values) => {
+      let index = 0;
+      while (index < values.length - 2 && q > values[index + 1][0]) index++;
+      const [start, from] = values[index];
+      const [end, to] = values[index + 1];
+      return mix(from, to, THREE.MathUtils.smoothstep(q, start, end));
+    };
+    const explode = Math.sin(clamp((q - 0.82) / 0.92) * Math.PI);
     frame.position.y = explode * 0.16;
     battery.position.set(explode * 0.35, explode * 0.8, explode * 0.8);
     wheels[0].position.x = A[0] - explode * 0.45;
     wheels[1].position.x = E[0] + explode * 0.45;
-    wheels.forEach((w) => (w.rotation.z = -q * 1.2));
-    let angle = mix(-0.45, -0.12, THREE.MathUtils.smoothstep(q, 0, 1.4));
-    angle = mix(angle, 0.27, THREE.MathUtils.smoothstep(q, 1.4, 2.1));
-    angle = mix(
-      angle,
-      view === "front" ? -0.6 : view === "detail" ? 0.36 : 0,
-      THREE.MathUtils.smoothstep(q, 2.6, 3),
+    const distance = q * 8.4;
+    const wheelAngle = -distance / 0.752;
+    wheels.forEach((wheel) => (wheel.rotation.z = wheelAngle));
+    const c1 = ease(0.35, 0.9),
+      c2 = ease(1.65, 2.12),
+      c3 = ease(2.5, 3);
+    const bend = Math.sin(q * Math.PI * 1.45) * (1 - c3);
+    const viewAngle = view === "front" ? -0.62 : view === "detail" ? 0.36 : -0.04;
+    bike.rotation.y = mix(
+      chapterBlend([[0, -0.45], [0.8, -0.08], [1.35, 0.2], [1.8, -0.24], [2.4, 0.18], [3, -0.04]]),
+      viewAngle,
+      c3,
     );
-    angleNow = mix(angleNow, angle, 1 - Math.exp(-10 * dt));
-    bike.rotation.y = reduce.matches ? -0.2 : angleNow;
-    bike.rotation.z = reduce.matches
-      ? 0
-      : mix(-0.06, 0, THREE.MathUtils.smoothstep(q, 0.2, 0.8));
-    const ease = (a, b) => THREE.MathUtils.smoothstep(q, a, b);
-    const c1 = ease(0.35, 0.8),
-      c2 = ease(1.45, 1.95),
-      c3 = ease(2.35, 2.95);
+    bike.rotation.z = bend * -0.035;
     const detail = view === "detail";
     let camX = mobile ? 0 : mix(mix(mix(0, -1.6, c1), -0.4, c2), 1.65, c3),
       camZ = mobile
-        ? mix(mix(mix(7.8, 8.8, c1), 8.2, c2), detail ? 6 : 8.4, c3)
+        ? mix(mix(mix(7.8, 8.8, c1), 7.9, c2), detail ? 6.6 : 8.4, c3)
         : mix(mix(mix(7.3, 7.8, c1), 7.5, c2), detail ? 5.4 : 7.4, c3),
       camY = mobile ? 1.2 : 2.0;
     let lookX = mobile
       ? 0
       : mix(mix(mix(0, -1, c1), -0.5, c2), detail ? -0.6 : 0.75, c3);
-    let bikeY = mobile ? mix(-0.85, -0.5, c1) + c3 * 0.65 : mix(-0.45, 0, c1);
+    let bikeX = mobile
+      ? chapterBlend([[0, 0], [0.8, 0.1], [1.5, 0.05], [2.2, 0.12], [3, 0]])
+      : chapterBlend([[0, 0], [0.8, 0.62], [1.5, 0.45], [2, 0.7], [2.45, 0.15], [3, -0.3]]);
+    let bikeY = mobile
+      ? chapterBlend([[0, -0.85], [0.85, -0.55], [1.55, -0.7], [2.25, -0.78], [3, 0.15]])
+      : chapterBlend([[0, -0.45], [0.9, 0], [1.5, -0.03], [2, -0.18], [2.5, -0.12], [3, 0]]);
+    let bikeScale = mobile
+      ? chapterBlend([[0, 0.58], [0.9, 0.54], [1.55, 0.56], [2.2, 0.6], [3, 0.58]])
+      : chapterBlend([[0, 1], [0.9, 0.94], [1.5, 0.94], [2.1, 1.05], [3, 1]]);
     if (reduce.matches) {
       bike.rotation.y =
         view === "front" ? -0.6 : view === "detail" ? 0.36 : -0.2;
       camX = mobile ? 0 : detail ? -0.6 : -1.3;
       camZ = detail ? (mobile ? 6 : 5.4) : mobile ? 8.4 : 7.8;
       lookX = mobile ? 0 : -0.5;
-      bikeY = mobile ? -0.5 : 0;
+      bikeX = 0;
+      bikeY = mobile ? -0.7 : 0;
+      bikeScale = mobile ? 0.5 : 1;
       frame.position.y = 0;
       battery.position.set(0, 0, 0);
       wheels[0].position.x = A[0];
@@ -470,23 +578,80 @@ try {
     }
     camera.position.set(camX, camY, camZ);
     camera.lookAt(lookX, mobile ? 0.1 : 0, 0);
-    bike.position.set(0, bikeY, 0);
-    bike.scale.setScalar(mobile ? 0.58 : 1);
+    bike.position.set(bikeX, bikeY, 0);
+    bike.scale.setScalar(bikeScale);
+    let sceneOpacity = 1, phoneMoving = false;
+    if (mobile && !reduce.matches) {
+      const slot = mobileReadingSlot(q);
+      let bounds = projectedBikeBounds();
+      const fit = Math.min(
+        1,
+        (innerWidth - 32) / Math.max(1, bounds.right - bounds.left),
+        Math.max(65, slot.height) / Math.max(1, bounds.bottom - bounds.top),
+      );
+      bikeScale *= fit;
+      bike.scale.setScalar(bikeScale);
+      for (let pass = 0; pass < 2; pass++) {
+        bounds = projectedBikeBounds();
+        const centre = (bounds.top + bounds.bottom) * 0.5;
+        const slotCentre = (slot.top + slot.bottom) * 0.5;
+        const worldPerPixel =
+          2 * camera.position.distanceTo(bike.position) * Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5)) / innerHeight;
+        bikeY += (centre - slotCentre) * worldPerPixel;
+        bike.position.y = bikeY;
+      }
+      phoneY = phoneY === null ? bikeY : mix(phoneY, bikeY, 1 - Math.exp(-32 * dt));
+      phoneScale = phoneScale === null ? bikeScale : mix(phoneScale, bikeScale, 1 - Math.exp(-32 * dt));
+      phoneMoving = Math.abs(phoneY - bikeY) > 0.001 || Math.abs(phoneScale - bikeScale) > 0.0002;
+      bikeY = phoneY;
+      bikeScale = phoneScale;
+      bike.position.y = bikeY;
+      bike.scale.setScalar(bikeScale);
+      bounds = projectedBikeBounds();
+      let overlap = 0;
+      for (const rect of slot.reading) overlap = Math.max(overlap,
+        Math.max(0, Math.min(bounds.bottom, rect.bottom + 10) - Math.max(bounds.top, rect.top - 10)),
+      );
+      sceneOpacity = THREE.MathUtils.smoothstep(slot.height, 45, 95) * slot.entrance;
+      sceneOpacity *= 1 - THREE.MathUtils.smoothstep(overlap, 0, 48);
+    } else if (mobile) {
+      // A still product in reduced-motion mode, hidden behind reading areas.
+      const bounds = projectedBikeBounds();
+      const readingAreas = document.querySelectorAll(
+        "header,.hero h1,.hero-bottom,.inside .section-copy,.model-label,.ride-heading,.ride-copy,.spec-strip,.config-intro,.config-panel,footer",
+      );
+      for (const area of readingAreas) {
+        const rect = area.getBoundingClientRect();
+        if (rect.bottom > bounds.top - 12 && rect.top < bounds.bottom + 12) {
+          sceneOpacity = 0;
+          break;
+        }
+      }
+    }
+    renderer.domElement.style.opacity = String(sceneOpacity);
+    const groundY = bikeY - 1.315 * bikeScale;
+    floor.position.set(bikeX, groundY, 0);
+    floor.scale.setScalar(bikeScale);
+    grid.position.set(reduce.matches ? 0 : -(distance % 1), groundY - 0.004, 0);
+    grid.material.opacity = reduce.matches ? 0.04 : mix(0.06, 0.13, c2) * (1 - c3 * 0.7);
+    road.position.set(reduce.matches ? 0 : -(distance % 3.4), groundY + 0.002, 0);
+    road.visible = !reduce.matches;
+    roadMaterial.opacity = (0.12 + c2 * 0.2) * (1 - explode * 0.8) * (1 - c3);
     renderer.render(scene, camera);
     frames++;
     stats.renderFrames = String(frames);
     stats.drawCalls = String(renderer.info.render.calls);
     stats.triangles = String(renderer.info.render.triangles);
     stats.renderDpr = String(renderer.getPixelRatio());
-    stats.renderMode = "active";
-    document.documentElement.style.setProperty("--ride", String(clamp(q / 3)));
-    const moving =
-      !reduce.matches &&
-      (Math.abs(progress - target) > 0.0005 ||
-        Math.abs(angleNow - angle) > 0.0005);
-    if (moving) {
-      raf = requestAnimationFrame(tick);
-    } else stats.renderMode = "idle";
+    stats.renderMode = phoneMoving ? "active" : "idle";
+    stats.journeyProgress = q.toFixed(5);
+    stats.journeyDistance = (reduce.matches ? 0 : distance).toFixed(5);
+    stats.wheelAngle = (reduce.matches ? 0 : wheelAngle).toFixed(5);
+    const style = document.documentElement.style;
+    style.setProperty("--ride", String(reduce.matches ? 0 : clamp(q / 3)));
+    style.setProperty("--road-shift", `${reduce.matches ? 0 : -(distance % 3.4) * 38}px`);
+    style.setProperty("--route-bend", String(reduce.matches ? 0 : bend));
+    if (phoneMoving) raf = requestAnimationFrame(tick);
   }
   addEventListener("scroll", wake, { passive: true });
   document.querySelectorAll("button,input").forEach((el) => {
