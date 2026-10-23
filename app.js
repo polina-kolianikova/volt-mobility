@@ -1,4 +1,9 @@
+import { phone, mobileFrames, mobileFallback } from "./mobile-stage.js?v=aa0cc574e8f800827427f3361cc1a98e51e7f69f9dc95033e351b99397965081";
 import * as THREE from "./assets/vendor/three.module.js?v=ce1fa418de16a19495a9f72495580e3015d7745c296d3ce0485897f902ddedfb";
+const drawFrames = mobileFrames(".chapter", ["h1", ".section-copy", ".ride-heading", ".config-intro"]);
+
+mobileFallback(".fallback-bike");
+
 const $ = (s) => document.querySelector(s),
   clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x)),
   mix = THREE.MathUtils.lerp;
@@ -103,7 +108,7 @@ try {
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setClearColor(0xeae9e2, 0);
   renderer.setPixelRatio(
-    Math.min(devicePixelRatio, innerWidth < 701 ? 1.35 : 1.6),
+    Math.min(devicePixelRatio, phone.matches ? 1.35 : 1.6),
   );
   renderer.setSize(innerWidth, innerHeight);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -403,62 +408,32 @@ try {
   });
   const road = new THREE.LineSegments(roadGeometry, roadMaterial);
   scene.add(road);
-  const bikeBounds = new THREE.Box3();
-  const corner = new THREE.Vector3();
-  function projectedBikeBounds() {
-    bike.updateMatrixWorld(true);
+  const phoneBounds = new THREE.Box3(), phoneCorner = new THREE.Vector3();
+  function fitPhoneBike() {
+    camera.zoom = 1;
+    camera.updateProjectionMatrix();
     camera.updateMatrixWorld(true);
-    bikeBounds.setFromObject(bike);
-    let top = Infinity, bottom = -Infinity, left = Infinity, right = -Infinity;
+    bike.updateMatrixWorld(true);
+    // Precise geometry bounds include separated wheels and battery. A rotated
+    // torus box would otherwise pulse the framing as its wheel turns.
+    phoneBounds.setFromObject(bike, true);
+    let extentX = 0, extentY = 0;
     for (let i = 0; i < 8; i++) {
-      corner.set(
-        i & 1 ? bikeBounds.max.x : bikeBounds.min.x,
-        i & 2 ? bikeBounds.max.y : bikeBounds.min.y,
-        i & 4 ? bikeBounds.max.z : bikeBounds.min.z,
+      phoneCorner.set(
+        i & 1 ? phoneBounds.max.x : phoneBounds.min.x,
+        i & 2 ? phoneBounds.max.y : phoneBounds.min.y,
+        i & 4 ? phoneBounds.max.z : phoneBounds.min.z,
       ).project(camera);
-      const x = (corner.x + 1) * innerWidth * 0.5;
-      const y = (1 - corner.y) * innerHeight * 0.5;
-      top = Math.min(top, y);
-      bottom = Math.max(bottom, y);
-      left = Math.min(left, x);
-      right = Math.max(right, x);
+      extentX = Math.max(extentX, Math.abs(phoneCorner.x));
+      extentY = Math.max(extentY, Math.abs(phoneCorner.y));
     }
-    return { top, bottom, left, right };
-  }
-  function mobileReadingSlot(q) {
-    const pairs = [
-      [".hero h1", ".hero-bottom"],
-      [".inside .section-copy", ".model-label"],
-      [".ride-heading", ".ride-copy"],
-      [".config-intro", ".config-panel"],
-    ];
-    const index = Math.min(3, Math.floor(q + 0.08));
-    const [before, after] = pairs[index];
-    let top = Math.max(24, $(before).getBoundingClientRect().bottom + 20);
-    let bottom = Math.min(innerHeight - 24, $(after).getBoundingClientRect().top - 20);
-    const reading = [...document.querySelectorAll(
-      "header,.hero h1,.hero-bottom,.inside .section-copy,.model-label,.ride-heading,.ride-copy,.spec-strip,.config-intro,.config-panel,footer",
-    )].map((el) => el.getBoundingClientRect()).filter((rect) =>
-      rect.height > 0 && rect.bottom > 24 && rect.top < innerHeight - 24,
-    ).sort((a, b) => a.top - b.top);
-    let entrance = index ? THREE.MathUtils.smoothstep(q, index - 0.08, index) : 1;
-    if (bottom - top < 120) {
-      let edge = 24, best = [24, 24];
-      for (const rect of reading) {
-        if (rect.top - 18 - edge > best[1] - best[0]) best = [edge, rect.top - 18];
-        edge = Math.max(edge, rect.bottom + 18);
-      }
-      if (innerHeight - 24 - edge > best[1] - best[0]) best = [edge, innerHeight - 24];
-      [top, bottom] = best;
-      entrance = 1;
-    }
-    return {
-      top,
-      bottom,
-      height: Math.max(0, bottom - top),
-      entrance,
-      reading,
-    };
+    camera.zoom = Math.min(1, 0.9 / extentX, 0.88 / extentY);
+    camera.updateProjectionMatrix();
+    Object.assign(document.documentElement.dataset, {
+      bikeFitX: (extentX * camera.zoom).toFixed(5),
+      bikeFitY: (extentY * camera.zoom).toFixed(5),
+      bikeFrameZoom: camera.zoom.toFixed(5),
+    });
   }
   addEventListener("resize", () => {
     if (contextLost) return;
@@ -471,9 +446,7 @@ try {
     raf = 0,
     contextLost = false,
     frames = 0,
-    slow = 0,
-    phoneY = null,
-    phoneScale = null;
+    slow = 0;
   const stats = document.documentElement.dataset;
   function wake() {
     if (!raf && !document.hidden && !contextLost) {
@@ -510,11 +483,10 @@ try {
         slow = 0;
       }
     } else slow = Math.max(0, slow - 1);
-    const dt = Math.min(Math.max((now - last) / 1000, 1 / 120), 0.05);
     last = now;
     // Native scroll is the single playhead. Stop and reverse have no old queue.
     progress = target;
-    const mobile = innerWidth < 701,
+    const mobile = phone.matches,
       q = progress;
     const ease = (a, b) => THREE.MathUtils.smoothstep(q, a, b);
     const chapterBlend = (values) => {
@@ -548,7 +520,7 @@ try {
       camZ = mobile
         ? mix(mix(mix(7.8, 8.8, c1), 7.9, c2), detail ? 6.6 : 8.4, c3)
         : mix(mix(mix(7.3, 7.8, c1), 7.5, c2), detail ? 5.4 : 7.4, c3),
-      camY = mobile ? 1.2 : 2.0;
+      camY = mobile ? 1.5 : 2.0;
     let lookX = mobile
       ? 0
       : mix(mix(mix(0, -1, c1), -0.5, c2), detail ? -0.6 : 0.75, c3);
@@ -576,59 +548,11 @@ try {
       wheels[1].position.x = E[0];
       wheels.forEach((w) => (w.rotation.z = 0));
     }
+    if (mobile) { bikeY = 0; bikeScale = 1.4; camZ = detail && q > 2.5 ? 7.4 : 8.4; }
     camera.position.set(camX, camY, camZ);
     camera.lookAt(lookX, mobile ? 0.1 : 0, 0);
     bike.position.set(bikeX, bikeY, 0);
     bike.scale.setScalar(bikeScale);
-    let sceneOpacity = 1, phoneMoving = false;
-    if (mobile && !reduce.matches) {
-      const slot = mobileReadingSlot(q);
-      let bounds = projectedBikeBounds();
-      const fit = Math.min(
-        1,
-        (innerWidth - 32) / Math.max(1, bounds.right - bounds.left),
-        Math.max(65, slot.height) / Math.max(1, bounds.bottom - bounds.top),
-      );
-      bikeScale *= fit;
-      bike.scale.setScalar(bikeScale);
-      for (let pass = 0; pass < 2; pass++) {
-        bounds = projectedBikeBounds();
-        const centre = (bounds.top + bounds.bottom) * 0.5;
-        const slotCentre = (slot.top + slot.bottom) * 0.5;
-        const worldPerPixel =
-          2 * camera.position.distanceTo(bike.position) * Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5)) / innerHeight;
-        bikeY += (centre - slotCentre) * worldPerPixel;
-        bike.position.y = bikeY;
-      }
-      phoneY = phoneY === null ? bikeY : mix(phoneY, bikeY, 1 - Math.exp(-32 * dt));
-      phoneScale = phoneScale === null ? bikeScale : mix(phoneScale, bikeScale, 1 - Math.exp(-32 * dt));
-      phoneMoving = Math.abs(phoneY - bikeY) > 0.001 || Math.abs(phoneScale - bikeScale) > 0.0002;
-      bikeY = phoneY;
-      bikeScale = phoneScale;
-      bike.position.y = bikeY;
-      bike.scale.setScalar(bikeScale);
-      bounds = projectedBikeBounds();
-      let overlap = 0;
-      for (const rect of slot.reading) overlap = Math.max(overlap,
-        Math.max(0, Math.min(bounds.bottom, rect.bottom + 10) - Math.max(bounds.top, rect.top - 10)),
-      );
-      sceneOpacity = THREE.MathUtils.smoothstep(slot.height, 45, 95) * slot.entrance;
-      sceneOpacity *= 1 - THREE.MathUtils.smoothstep(overlap, 0, 48);
-    } else if (mobile) {
-      // A still product in reduced-motion mode, hidden behind reading areas.
-      const bounds = projectedBikeBounds();
-      const readingAreas = document.querySelectorAll(
-        "header,.hero h1,.hero-bottom,.inside .section-copy,.model-label,.ride-heading,.ride-copy,.spec-strip,.config-intro,.config-panel,footer",
-      );
-      for (const area of readingAreas) {
-        const rect = area.getBoundingClientRect();
-        if (rect.bottom > bounds.top - 12 && rect.top < bounds.bottom + 12) {
-          sceneOpacity = 0;
-          break;
-        }
-      }
-    }
-    renderer.domElement.style.opacity = String(sceneOpacity);
     const groundY = bikeY - 1.315 * bikeScale;
     floor.position.set(bikeX, groundY, 0);
     floor.scale.setScalar(bikeScale);
@@ -637,13 +561,13 @@ try {
     road.position.set(reduce.matches ? 0 : -(distance % 3.4), groundY + 0.002, 0);
     road.visible = !reduce.matches;
     roadMaterial.opacity = (0.12 + c2 * 0.2) * (1 - explode * 0.8) * (1 - c3);
-    renderer.render(scene, camera);
+    drawFrames(renderer, scene, camera, fitPhoneBike);
     frames++;
     stats.renderFrames = String(frames);
     stats.drawCalls = String(renderer.info.render.calls);
     stats.triangles = String(renderer.info.render.triangles);
     stats.renderDpr = String(renderer.getPixelRatio());
-    stats.renderMode = phoneMoving ? "active" : "idle";
+    stats.renderMode = "idle";
     stats.journeyProgress = q.toFixed(5);
     stats.journeyDistance = (reduce.matches ? 0 : distance).toFixed(5);
     stats.wheelAngle = (reduce.matches ? 0 : wheelAngle).toFixed(5);
@@ -651,7 +575,6 @@ try {
     style.setProperty("--ride", String(reduce.matches ? 0 : clamp(q / 3)));
     style.setProperty("--road-shift", `${reduce.matches ? 0 : -(distance % 3.4) * 38}px`);
     style.setProperty("--route-bend", String(reduce.matches ? 0 : bend));
-    if (phoneMoving) raf = requestAnimationFrame(tick);
   }
   addEventListener("scroll", wake, { passive: true });
   document.querySelectorAll("button,input").forEach((el) => {
@@ -677,9 +600,12 @@ try {
     renderer.domElement.hidden = true;
     renderer.domElement.style.display = "none";
     document.body.classList.remove("webgl");
+    document.body.classList.add("no-webgl");
     stats.renderMode = "fallback";
   });
   wake();
 } catch (e) {
+  document.body.classList.remove("webgl");
+  document.body.classList.add("no-webgl");
   console.warn("3D view unavailable; configuration remains usable.", e);
 }
